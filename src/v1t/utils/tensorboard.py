@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 sns.set_style("ticks")
-plt.style.use("seaborn-deep")
+plt.style.use("seaborn-v0_8")
 
 PARAMS_PAD = 2
 PARAMS_LENGTH = 3

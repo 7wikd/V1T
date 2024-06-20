@@ -129,6 +129,30 @@ class Image2Patches(nn.Module):
         return outputs
 
 
+# class MLP(nn.Module):
+#     def __init__(
+#         self,
+#         in_dim: int,
+#         hidden_dim: int,
+#         out_dim: int = None,
+#         dropout: float = 0.0,
+#         use_bias: bool = True,
+#     ):
+#         super(MLP, self).__init__()
+#         if out_dim is None:
+#             out_dim = in_dim
+#         self.model = nn.Sequential(
+#             nn.LayerNorm(in_dim),
+#             nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
+#             nn.GELU(),
+#             nn.Dropout(p=dropout),
+#             nn.Linear(in_features=hidden_dim, out_features=out_dim, bias=use_bias),
+#             nn.Dropout(p=dropout),
+#         )
+
+#     def forward(self, inputs: torch.Tensor):
+#         return self.model(inputs)
+
 class MLP(nn.Module):
     def __init__(
         self,
@@ -141,17 +165,56 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         if out_dim is None:
             out_dim = in_dim
-        self.model = nn.Sequential(
+
+        # Encoder
+        self.encoder1 = nn.Sequential(
             nn.LayerNorm(in_dim),
             nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
             nn.GELU(),
             nn.Dropout(p=dropout),
-            nn.Linear(in_features=hidden_dim, out_features=out_dim, bias=use_bias),
+        )
+        self.encoder2 = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
+            nn.GELU(),
+            nn.Dropout(p=dropout),
+        )
+
+        # Bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
+            nn.GELU(),
+            nn.Dropout(p=dropout),
+        )
+
+        # Decoder
+        self.decoder1 = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Linear(in_features=hidden_dim * 2, out_features=hidden_dim, bias=use_bias),
+            nn.GELU(),
+            nn.Dropout(p=dropout),
+        )
+        self.decoder2 = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Linear(in_features=hidden_dim * 2, out_features=out_dim, bias=use_bias),
+            nn.GELU(),
             nn.Dropout(p=dropout),
         )
 
     def forward(self, inputs: torch.Tensor):
-        return self.model(inputs)
+        # Encoder
+        enc1 = self.encoder1(inputs)
+        enc2 = self.encoder2(enc1)
+
+        # Bottleneck
+        bottleneck = self.bottleneck(enc2)
+
+        # Decoder with skip connections
+        dec1 = self.decoder1(torch.cat([bottleneck, enc2], dim=-1))
+        dec2 = self.decoder2(torch.cat([dec1, enc1], dim=-1))
+
+        return dec2
 
 
 class BehaviorMLP(nn.Module):
@@ -181,6 +244,13 @@ class BehaviorMLP(nn.Module):
                 mouse_id: nn.Sequential(
                     nn.Linear(
                         in_features=in_dim,
+                        out_features=out_dim,
+                        bias=use_bias,
+                    ),
+                    nn.Tanh(),
+                    nn.Dropout(p=dropout),
+                     nn.Linear(
+                        in_features=out_dim,
                         out_features=out_dim // 2,
                         bias=use_bias,
                     ),
