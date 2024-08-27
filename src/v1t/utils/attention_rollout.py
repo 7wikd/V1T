@@ -122,10 +122,12 @@ def attention_rollout(attention: torch.Tensor, image_shape: t.List[int]):
     return heatmap[0]
 
 
-def attention_rollouts(attentions: torch.Tensor, image_shape: t.List[int]):
+def attention_rollouts(attentions: torch.Tensor, image_shape: t.List[int]) -> torch.Tensor:
     """Apply attention rollout to a batch of softmax attentions"""
     assert attentions.dim() == 5
     batch_size = attentions.size(0)
+    attentions = torch.where(torch.isnan(attentions), torch.zeros_like(attentions), attentions)
+
     with torch.device(attentions.device):
         heatmaps = torch.zeros((batch_size, *image_shape))
         for i in range(batch_size):

@@ -11,7 +11,6 @@ from torch.utils.checkpoint import checkpoint
 
 from v1t.models.utils import DropPath
 
-
 class PatchShifting(nn.Module):
     """Patch shifting for Shifted Patch Tokenization"""
 
@@ -129,30 +128,6 @@ class Image2Patches(nn.Module):
         return outputs
 
 
-# class MLP(nn.Module):
-#     def __init__(
-#         self,
-#         in_dim: int,
-#         hidden_dim: int,
-#         out_dim: int = None,
-#         dropout: float = 0.0,
-#         use_bias: bool = True,
-#     ):
-#         super(MLP, self).__init__()
-#         if out_dim is None:
-#             out_dim = in_dim
-#         self.model = nn.Sequential(
-#             nn.LayerNorm(in_dim),
-#             nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
-#             nn.GELU(),
-#             nn.Dropout(p=dropout),
-#             nn.Linear(in_features=hidden_dim, out_features=out_dim, bias=use_bias),
-#             nn.Dropout(p=dropout),
-#         )
-
-#     def forward(self, inputs: torch.Tensor):
-#         return self.model(inputs)
-
 class MLP(nn.Module):
     def __init__(
         self,
@@ -161,60 +136,71 @@ class MLP(nn.Module):
         out_dim: int = None,
         dropout: float = 0.0,
         use_bias: bool = True,
+        use_other: int = 0,
     ):
         super(MLP, self).__init__()
         if out_dim is None:
             out_dim = in_dim
 
-        # Encoder
-        self.encoder1 = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-        )
-        self.encoder2 = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-        )
+        self.use_other = use_other
+        if self.use_other == 1:
+            # Encoder
+            self.encoder1 = nn.Sequential(
+                nn.LayerNorm(in_dim),
+                nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+            )
+            self.encoder2 = nn.Sequential(
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+            )
 
-        # Bottleneck
-        self.bottleneck = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-        )
+            # Bottleneck
+            self.bottleneck = nn.Sequential(
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(in_features=hidden_dim, out_features=hidden_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+            )
 
-        # Decoder
-        self.decoder1 = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(in_features=hidden_dim * 2, out_features=hidden_dim, bias=use_bias),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-        )
-        self.decoder2 = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(in_features=hidden_dim * 2, out_features=out_dim, bias=use_bias),
-            nn.GELU(),
-            nn.Dropout(p=dropout),
-        )
+            # Decoder
+            self.decoder1 = nn.Sequential(
+                nn.LayerNorm(hidden_dim * 2),
+                nn.Linear(in_features=hidden_dim * 2, out_features=hidden_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+            )
+            self.decoder2 = nn.Sequential(
+                nn.LayerNorm(hidden_dim * 2),
+                nn.Linear(in_features=hidden_dim * 2, out_features=out_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+            )
+        else:
+            self.model = nn.Sequential(
+                nn.LayerNorm(in_dim),
+                nn.Linear(in_features=in_dim, out_features=hidden_dim, bias=use_bias),
+                nn.GELU(),
+                nn.Dropout(p=dropout),
+                nn.Linear(in_features=hidden_dim, out_features=out_dim, bias=use_bias),
+                nn.Dropout(p=dropout),
+            )
+
+        # self.use_other = use_other
 
     def forward(self, inputs: torch.Tensor):
-        # Encoder
-        enc1 = self.encoder1(inputs)
-        enc2 = self.encoder2(enc1)
-
-        # Bottleneck
-        bottleneck = self.bottleneck(enc2)
-
-        # Decoder with skip connections
-        dec1 = self.decoder1(torch.cat([bottleneck, enc2], dim=-1))
-        dec2 = self.decoder2(torch.cat([dec1, enc1], dim=-1))
-
-        return dec2
+        if self.use_other == 1:
+            enc1 = self.encoder1(inputs)
+            enc2 = self.encoder2(enc1)
+            bottleneck = self.bottleneck(enc2)
+            dec1 = self.decoder1(torch.cat([bottleneck, enc2], dim=-1))
+            dec2 = self.decoder2(torch.cat([dec1, enc1], dim=-1))
+            return dec2
+        else:
+            return self.model(inputs)
 
 
 class BehaviorMLP(nn.Module):
@@ -225,6 +211,7 @@ class BehaviorMLP(nn.Module):
         dropout: float = 0.0,
         mouse_ids: t.List[str] = None,
         use_bias: bool = True,
+        use_extended: int = 0,
     ):
         """
         behavior mode:
@@ -239,37 +226,58 @@ class BehaviorMLP(nn.Module):
         self.behavior_mode = behavior_mode
         in_dim = 3 if behavior_mode == 2 else 5
         mouse_ids = mouse_ids if behavior_mode == 4 else ["share"]
-        self.models = nn.ModuleDict(
-            {
-                mouse_id: nn.Sequential(
-                    nn.Linear(
-                        in_features=in_dim,
-                        out_features=out_dim,
-                        bias=use_bias,
-                    ),
-                    nn.Tanh(),
-                    nn.Dropout(p=dropout),
-                     nn.Linear(
-                        in_features=out_dim,
-                        out_features=out_dim // 2,
-                        bias=use_bias,
-                    ),
-                    nn.Tanh(),
-                    nn.Dropout(p=dropout),
-                    nn.Linear(
-                        in_features=out_dim // 2,
-                        out_features=out_dim,
-                        bias=use_bias,
-                    ),
-                    nn.Tanh(),
-                )
-                for mouse_id in mouse_ids
-            }
-        )
+
+        self.use_extended = use_extended
+
+        if self.use_extended == 1:
+            self.models = nn.ModuleDict(
+                {
+                    mouse_id: nn.Sequential(
+                        nn.Linear(
+                            in_features=in_dim,
+                            out_features=out_dim,
+                            bias=use_bias,
+                        ),
+                        nn.Tanh(),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(
+                            in_features=out_dim,
+                            out_features=out_dim // 2,
+                            bias=use_bias,
+                        ),
+                        nn.Tanh(),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(
+                            in_features=out_dim // 2,
+                            out_features=out_dim,
+                            bias=use_bias,
+                        ),
+                        nn.Tanh(),
+                    )
+                    for mouse_id in mouse_ids
+                }
+            )
+        else:
+            self.models = nn.ModuleDict(
+                {
+                    mouse_id: nn.Sequential(
+                        nn.Linear(
+                            in_features=in_dim,
+                            out_features=out_dim,
+                            bias=use_bias,
+                        ),
+                        nn.Tanh(),
+                        nn.Dropout(p=dropout),
+                    )
+                    for mouse_id in mouse_ids
+                }
+            )
+
 
     def forward(self, inputs: torch.Tensor, mouse_id: str):
         mouse_id = mouse_id if self.behavior_mode == 4 else "share"
         return self.models[mouse_id](inputs)
+
 
 
 class Attention(nn.Module):
@@ -282,9 +290,11 @@ class Attention(nn.Module):
         use_lsa: bool = False,
         use_bias: bool = True,
         grad_checkpointing: bool = False,
+        attention_type: str = "scaled_dot_product"
     ):
         super(Attention, self).__init__()
         self.grad_checkpointing = grad_checkpointing
+        self.attention_type = attention_type
         inner_dim = emb_dim * num_heads
 
         self.layer_norm = nn.LayerNorm(emb_dim)
@@ -331,15 +341,45 @@ class Attention(nn.Module):
             dots[:, :, self.mask[:, 0], self.mask[:, 1]] = -self.max_value
         attn = self.attend(dots)
         attn = self.dropout(attn)
-        outputs = einsum(attn, v, "b h n i, b h i d -> b h n d")
+        outputs = torch.einsum("b h n i, b h i d -> b h n d", attn, v)
+        return outputs
+    
+    def cosine_similarity_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        q_norm = F.normalize(q, p=2, dim=-1)
+        k_norm = F.normalize(k, p=2, dim=-1)
+        energy = torch.matmul(q_norm, k_norm.transpose(-1, -2))
+        attn = self.attend(energy)
+        attn = self.dropout(attn)
+        outputs = torch.einsum('b h n i, b h i d -> b h n d', attn, v)
         return outputs
 
+    def causal_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+            """
+            Causal attention mechanism that ensures each token can only attend to previous tokens.
+            """
+            scores = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+            seq_len = q.size(-2)
+            causal_mask = torch.tril(torch.ones((seq_len, seq_len), device=q.device)).unsqueeze(0).unsqueeze(0)
+            scores = scores.masked_fill(causal_mask == 0, float('-inf'))
+            attn = self.attend(scores)
+            attn = self.dropout(attn)
+            outputs = torch.einsum("b h n i, b h i d -> b h n d", attn, v)
+            return outputs
+    
     def mha(self, inputs: torch.Tensor):
         inputs = self.layer_norm(inputs)
         q, k, v = torch.chunk(self.to_qkv(inputs), chunks=3, dim=-1)
-        outputs = self.scaled_dot_product_attention(
-            q=self.rearrange(q), k=self.rearrange(k), v=self.rearrange(v)
-        )
+        q, k, v = self.rearrange(q), self.rearrange(k), self.rearrange(v)
+
+        if self.attention_type == "scaled_dot_product":
+            outputs = self.scaled_dot_product_attention(q, k, v)
+        elif self.attention_type == "causal":
+            outputs = self.causal_attention(q, k, v)
+        elif self.attention_type == "cosine_similarity":
+            outputs = self.cosine_similarity_attention(q, k, v)
+        else:
+            raise ValueError(f"Unknown attention type: {self.attention_type}")
+
         outputs = rearrange(outputs, "b h n d -> b n (h d)")
         outputs = self.projection(outputs)
         return outputs
@@ -352,6 +392,7 @@ class Attention(nn.Module):
         else:
             outputs = self.mha(inputs)
         return outputs
+
 
 
 class Transformer(nn.Module):
@@ -369,6 +410,9 @@ class Transformer(nn.Module):
         drop_path: float = 0.0,
         use_bias: bool = True,
         grad_checkpointing: bool = False,
+        use_other: int = 0,
+        use_extended: int = 0,
+        attention_type: str = "scaled_dot_product",
     ):
         super(Transformer, self).__init__()
         self.blocks = nn.ModuleList([])
@@ -383,12 +427,14 @@ class Transformer(nn.Module):
                         use_lsa=use_lsa,
                         use_bias=use_bias,
                         grad_checkpointing=grad_checkpointing,
+                        attention_type= attention_type
                     ),
                     "mlp": MLP(
                         in_dim=emb_dim,
                         hidden_dim=mlp_dim,
                         dropout=dropout,
                         use_bias=use_bias,
+                        use_other= use_other
                     ),
                 }
             )
@@ -398,6 +444,7 @@ class Transformer(nn.Module):
                     out_dim=emb_dim,
                     mouse_ids=mouse_ids,
                     use_bias=use_bias,
+                    use_extended=use_extended
                 )
             self.blocks.append(block)
         self.drop_path = DropPath(dropout=drop_path)
@@ -472,6 +519,9 @@ class ViTCore(Core):
             drop_path=args.drop_path,
             use_bias=not args.disable_bias,
             grad_checkpointing=args.grad_checkpointing,
+            use_other=args.use_MLP,
+            use_extended=args.use_BMLP,
+            attention_type=args.attention_type
         )
         # calculate latent height and width based on num_patches
         h, w = self.find_shape(self.patch_embedding.num_patches - 1)
