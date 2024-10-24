@@ -19,8 +19,9 @@ class Args:
         verbose: int = 1,
     ):
         self.dataset = dataset
+        output_dir = getattr(config, 'output_dir', 'runs/')
         self.output_dir = os.path.join(
-            config.output_dir, f"{datetime.now():%Y%m%d-%Hh%Mm}-{id}"
+            output_dir, f"{datetime.now():%Y%m%d-%Hh%Mm}-{id}"
         )
         self.num_workers = num_workers
         self.device = ""
@@ -72,7 +73,7 @@ if __name__ == "__main__":
 
     for i in range(params.num_trials):
         wandb.agent(
-            sweep_id=f"bryanlimy/sensorium/{params.sweep_id}",
+            sweep_id=f"7wikd/V1T/{params.sweep_id}",
             function=partial(
                 main,
                 wandb_group=params.wandb_group,

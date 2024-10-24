@@ -311,7 +311,7 @@ class Attention(nn.Module):
             nn.Dropout(p=dropout),
         )
 
-        scale = emb_dim**-0.5
+        scale = 1.0 / math.sqrt(emb_dim)
         if use_lsa:
             self.register_parameter(
                 "scale",
@@ -354,18 +354,20 @@ class Attention(nn.Module):
         return outputs
 
     def causal_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
-            """
-            Causal attention mechanism that ensures each token can only attend to previous tokens.
-            """
-            scores = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-            seq_len = q.size(-2)
-            causal_mask = torch.tril(torch.ones((seq_len, seq_len), device=q.device)).unsqueeze(0).unsqueeze(0)
-            scores = scores.masked_fill(causal_mask == 0, float('-inf'))
-            attn = self.attend(scores)
-            attn = self.dropout(attn)
-            outputs = torch.einsum("b h n i, b h i d -> b h n d", attn, v)
-            return outputs
-    
+        """
+        Causal attention mechanism that ensures each token can only attend to previous tokens.
+        """
+        scores = torch.matmul(q, k.transpose(-1, -2)) * self.scale  # (B, H, N, N)
+        seq_len = q.size(-2)
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=q.device), diagonal=1).bool()
+        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+        # Replace -inf with large negative number to prevent NaNs in softmax
+        scores = torch.where(torch.isinf(scores), torch.full_like(scores, -1e9), scores)
+        attn = self.attend(scores)  # Softmax over last dimension
+        attn = self.dropout(attn)
+        outputs = torch.einsum("b h n i, b h i d -> b h n d", attn, v)
+        return outputs
+
     def mha(self, inputs: torch.Tensor):
         inputs = self.layer_norm(inputs)
         q, k, v = torch.chunk(self.to_qkv(inputs), chunks=3, dim=-1)
@@ -392,8 +394,6 @@ class Attention(nn.Module):
         else:
             outputs = self.mha(inputs)
         return outputs
-
-
 
 class Transformer(nn.Module):
     def __init__(
@@ -427,7 +427,7 @@ class Transformer(nn.Module):
                         use_lsa=use_lsa,
                         use_bias=use_bias,
                         grad_checkpointing=grad_checkpointing,
-                        attention_type= attention_type
+                        attention_type= attention_type,
                     ),
                     "mlp": MLP(
                         in_dim=emb_dim,
@@ -521,7 +521,7 @@ class ViTCore(Core):
             grad_checkpointing=args.grad_checkpointing,
             use_other=args.use_MLP,
             use_extended=args.use_BMLP,
-            attention_type=args.attention_type
+            attention_type=args.attention_type,
         )
         # calculate latent height and width based on num_patches
         h, w = self.find_shape(self.patch_embedding.num_patches - 1)

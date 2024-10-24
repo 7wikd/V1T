@@ -135,6 +135,44 @@ def attention_rollouts(attentions: torch.Tensor, image_shape: t.List[int]) -> to
     return heatmaps
 
 
+def attention_rollout_causal(attention: torch.Tensor, image_shape: t.List[int]):
+    """
+    Compute attention maps for causal attention by averaging the attention weights over layers and heads.
+    """
+    assert attention.dim() == 4  # (num layers, num heads, seq len, seq len)
+    with torch.device(attention.device):
+        # Average over heads
+        attention = attention.mean(dim=1)  # (num layers, seq len, seq len)
+
+        # Sum over layers
+        cumulative_attention = attention.sum(dim=0)  # (seq len, seq len)
+
+        # Normalize
+        attention_map = cumulative_attention / cumulative_attention.sum(dim=-1, keepdim=True)
+
+        # For causal attention, focus on the last token (e.g., the [CLS] token) and its attention to previous tokens
+        cls_attention = attention_map[0, :]  # Attention from [CLS] token
+        cls_attention = cls_attention[1:]     # Exclude [CLS] token itself
+
+        # Reshape and resize to match image dimensions
+        cls_attention = torch.reshape(cls_attention, shape=find_shape(len(cls_attention)))
+        cls_attention = normalize(cls_attention)
+        cls_attention = resize(cls_attention[None, ...], size=image_shape, antialias=False)
+    return cls_attention[0]
+
+def attention_rollouts_causal(attentions: torch.Tensor, image_shape: t.List[int]) -> torch.Tensor:
+    """Apply attention rollout to a batch of causal attentions."""
+    assert attentions.dim() == 5
+    batch_size = attentions.size(0)
+    attentions = torch.where(torch.isnan(attentions), torch.zeros_like(attentions), attentions)
+
+    with torch.device(attentions.device):
+        heatmaps = torch.zeros((batch_size, *image_shape))
+        for i in range(batch_size):
+            heatmaps[i] = attention_rollout_causal(attentions[i], image_shape=image_shape)
+    return heatmaps
+
+
 @torch.no_grad()
 def extract_attention_maps(
     ds: DataLoader,
@@ -181,10 +219,15 @@ def extract_attention_maps(
         )
         recorder.clear()
 
-        # extract attention rollout maps within the loop in order to avoid OOM
-        heatmaps = attention_rollouts(
-            attentions=attentions, image_shape=images.shape[2:]
-        )
+        if model.core.transformer.blocks[0]['mha'].attention_type == 'causal':
+            heatmaps = attention_rollouts_causal(
+                attentions=attentions, image_shape=images.shape[2:]
+            )
+        else:
+            # extract attention rollout maps within the loop in order to avoid OOM
+            heatmaps = attention_rollouts(
+                attentions=attentions, image_shape=images.shape[2:]
+            )
 
         results["images"].append(i_transform_image(images.cpu()))
         results["heatmaps"].append(heatmaps.cpu())

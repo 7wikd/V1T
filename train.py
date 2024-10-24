@@ -699,7 +699,6 @@ from v1t.models import get_model, Model
 from v1t.utils import utils, tensorboard
 from v1t.utils.scheduler import Scheduler
 
-
 def gather(result: t.Dict[str, t.List[torch.Tensor]]):
     return {k: torch.sum(torch.stack(v)).cpu() for k, v in result.items()}
 
@@ -756,8 +755,12 @@ def train_step(
         scaler.scale(total_loss).backward()
         result["loss/loss"].append(loss.detach())
         result["loss/reg_loss"].append(reg_loss.detach())
-        result["loss/total_loss"].append(total_loss.detach())
+        result["loss/total_loss"].append(total_loss.detach())   
     if update:
+        
+        # scaler.unscale_(optimizer)
+        # auto_grad_clip.step(model)
+
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad()
@@ -781,6 +784,8 @@ def train(
     update_frequency = len(mouse_ids)
     model.train(True)
     optimizer.zero_grad()
+    
+    # Main training loop
     for i, (mouse_id, mouse_batch) in tqdm(
         enumerate(ds), desc="Train", total=len(ds), disable=args.verbose < 2
     ):
@@ -796,6 +801,8 @@ def train(
             device=args.device,
         )
         utils.update_dict(results[mouse_id], result)
+
+    # Log the metrics after each epoch
     return utils.log_metrics(results, epoch=epoch, summary=summary, mode=0)
 
 
@@ -870,6 +877,8 @@ def validate(
             mouse_result.update(compute_metrics(y_true=y_true, y_pred=y_pred))
             results[mouse_id] = mouse_result
             del y_true, y_pred
+
+    # Log validation metrics
     return utils.log_metrics(results, epoch=epoch, summary=summary, mode=1)
 
 

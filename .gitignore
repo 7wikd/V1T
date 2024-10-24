@@ -143,6 +143,8 @@ dmypy.json
 *.h5
 *.json
 /runs
+/new_runs
 wandb/
 *.sh
 !setup.sh
+/sweep_configs

@@ -325,8 +325,8 @@ def wandb_init(args, wandb_sweep: bool):
             config.pop("clear_output_dir", None)
             wandb.init(
                 config=config,
-                project="sensorium",
-                entity="bryanlimy",
+                project="V1T",
+                entity="7wikd",
                 group=args.wandb_group,
                 name=os.path.basename(args.output_dir),
             )
@@ -346,24 +346,71 @@ def metrics2df(results: t.Dict[int, torch.Tensor]):
     return pd.DataFrame({"mouse": mouse_ids, "results": values})
 
 
+# def log_metrics(
+#     results: t.Dict[str, t.Dict[str, t.Any]],
+#     epoch: int,
+#     summary: tensorboard.Summary = None,
+#     mode: int = 0,
+# ):
+#     """Compute the mean of the metrics in results and log to Summary
+
+#     Args:
+#         results: t.Dict[str, t.Dict[str, t.List[float]]],
+#             a dictionary of tensors where keys are the name of the metrics
+#             that represent results from of a mouse.
+#         epoch: int, the current epoch number.
+#         mode: int, Summary logging mode.
+#         summary: tensorboard.Summary, Summary class
+#     """
+#     mouse_ids = list(results.keys())
+#     metrics = list(results[mouse_ids[0]].keys())
+#     for mouse_id in mouse_ids:
+#         for metric in metrics:
+#             value = results[mouse_id][metric]
+#             if isinstance(value, list):
+#                 if torch.is_tensor(value[0]):
+#                     results[mouse_id][metric] = torch.mean(torch.stack(value)).item()
+#                 else:
+#                     results[mouse_id][metric] = np.mean(value)
+#             if summary is not None:
+#                 summary.scalar(
+#                     f"{metric}/mouse{mouse_id}",
+#                     value=results[mouse_id][metric],
+#                     step=epoch,
+#                     mode=mode,
+#                 )
+#     overall_result = {}
+#     for metric in metrics:
+#         value = np.mean([results[mouse_id][metric] for mouse_id in mouse_ids])
+#         overall_result[metric[metric.find("/") + 1 :]] = value
+#         if summary is not None:
+#             summary.scalar(metric, value=value, step=epoch, mode=mode)
+#     return overall_result
+
 def log_metrics(
     results: t.Dict[str, t.Dict[str, t.Any]],
     epoch: int,
-    summary: tensorboard.Summary = None,
+    summary: tensorboard.Summary,  # Now using your custom Summary class
     mode: int = 0,
+    performance_history: t.Dict[str, t.List[float]] = None,
 ):
     """Compute the mean of the metrics in results and log to Summary
-
+    
     Args:
         results: t.Dict[str, t.Dict[str, t.List[float]]],
             a dictionary of tensors where keys are the name of the metrics
-            that represent results from of a mouse.
+            that represent results from a mouse.
         epoch: int, the current epoch number.
         mode: int, Summary logging mode.
-        summary: tensorboard.Summary, Summary class
+        summary: Summary class for TensorBoard logging.
+        performance_history: t.Dict[str, t.List[float]], A history dictionary 
+            to store the metrics over epochs for plotting.
     """
+    
     mouse_ids = list(results.keys())
     metrics = list(results[mouse_ids[0]].keys())
+
+    # Update the dictionary with metric values per mouse
     for mouse_id in mouse_ids:
         for metric in metrics:
             value = results[mouse_id][metric]
@@ -372,19 +419,30 @@ def log_metrics(
                     results[mouse_id][metric] = torch.mean(torch.stack(value)).item()
                 else:
                     results[mouse_id][metric] = np.mean(value)
-            if summary is not None:
-                summary.scalar(
-                    f"{metric}/mouse{mouse_id}",
-                    value=results[mouse_id][metric],
-                    step=epoch,
-                    mode=mode,
-                )
+
+            # Log each metric for this mouse to TensorBoard using Summary class
+            summary.scalar(
+                f"{metric}/mouse{mouse_id}",
+                value=results[mouse_id][metric],
+                step=epoch,
+                mode=mode,
+            )
+
+    # Compute overall metrics (average across all mice)
     overall_result = {}
     for metric in metrics:
         value = np.mean([results[mouse_id][metric] for mouse_id in mouse_ids])
-        overall_result[metric[metric.find("/") + 1 :]] = value
-        if summary is not None:
-            summary.scalar(metric, value=value, step=epoch, mode=mode)
+        overall_result[metric[metric.find("/") + 1:]] = value
+
+        # Log overall metric to TensorBoard
+        summary.scalar(metric, value=value, step=epoch, mode=mode)
+
+        # Log the performance metrics for future plotting (history)
+        if performance_history is not None:
+            if metric not in performance_history:
+                performance_history[metric] = []
+            performance_history[metric].append(value)
+
     return overall_result
 
 
